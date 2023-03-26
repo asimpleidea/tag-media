@@ -27,9 +27,35 @@ pub enum Error {
     /// It was not possible to establish a connection to the database.
     #[error("connection error: {0}")]
     ConnectionError(#[from] database::connection::Error),
+    /// The provided base path ID was not found, e.g. was <= 0.
+    #[error("invalid id")]
+    InvalidID,
+    /// The base path could not be found.
+    #[error("not found")]
+    NotFound,
 }
 
 impl BasePaths {
+    /// Gets a single base path by using its ID.
+    ///
+    /// It returns an error in case the ID is not valid, it was not found, or
+    /// if there was an error on the database.
+    pub fn get(&self, id: i32) -> Result<BasePath, Error> {
+        if id <= 0 {
+            return Err(Error::InvalidID);
+        }
+        use database::schema::base_paths::dsl::{base_paths as bp_table, id as bp_id};
+
+        let conn = &mut self.connection.establish_connection()?;
+        bp_table
+            .filter(bp_id.eq(id))
+            .first(conn)
+            .map_err(|err| match err {
+                err if err == diesel::result::Error::NotFound => Error::NotFound,
+                err => Error::DatabaseError(err),
+            })
+    }
+
     /// List all base paths that are currently being saved on the database.
     ///
     /// Optionally, you can list only some specific IDs with `ids`.
