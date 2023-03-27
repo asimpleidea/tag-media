@@ -1,6 +1,7 @@
 mod data;
 pub mod database;
 pub mod media;
+pub mod tags;
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
