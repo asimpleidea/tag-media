@@ -80,7 +80,6 @@ impl BasePaths {
         }
 
         use database::schema::base_paths::dsl::{base_paths, description, id as bp_id};
-
         match diesel::update(base_paths.filter(bp_id.eq(id)))
             .set(description.eq(new_desc))
             .execute(&mut self.connection.establish_connection()?)
@@ -106,7 +105,6 @@ impl BasePaths {
         // can be used.
 
         use database::schema::base_paths::dsl::{base_paths as bp_table, id};
-
         let bp_ids = match ids {
             None => vec![],
             Some(vals) => vals.into_iter().collect(),
@@ -123,5 +121,25 @@ impl BasePaths {
             .order(id.asc())
             .load::<BasePath>(conn)
             .map_err(|err| Error::DatabaseError(err))
+    }
+
+    /// Deletes a base path from the database.
+    ///
+    /// It returns an error in case the ID is not valid, it was not found, or
+    /// if there was an error on the database.
+    ///
+    /// TODO:  check if there are media with this: error if there are
+    pub fn delete(&self, id: i32) -> Result<(), Error> {
+        if let Err(err) = self.get(id) {
+            return Err(err);
+        }
+
+        use database::schema::base_paths::dsl::{base_paths, id as bp_id};
+        match diesel::delete(base_paths.filter(bp_id.eq(id)))
+            .execute(&mut self.connection.establish_connection()?)
+        {
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::DatabaseError(err)),
+        }
     }
 }
