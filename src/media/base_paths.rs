@@ -5,6 +5,8 @@ use crate::{
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use thiserror::Error;
 
+const MAX_DESCRIPTION_LENGTH: usize = 300;
+
 /// BasePaths contains code and data that performs operations on base paths
 /// on the database.
 pub struct BasePaths {
@@ -33,6 +35,9 @@ pub enum Error {
     /// The base path could not be found.
     #[error("not found")]
     NotFound,
+    /// The provided description is too long.
+    #[error("description cannot be longer than 300 characters")]
+    DescriptionTooLong,
 }
 
 impl BasePaths {
@@ -54,6 +59,35 @@ impl BasePaths {
                 err if err == diesel::result::Error::NotFound => Error::NotFound,
                 err => Error::DatabaseError(err),
             })
+    }
+
+    /// Updates the description of a base path.
+    ///
+    /// It returns an error in case the ID is not valid, it was not found, or
+    /// if there was an error on the database.
+    pub fn update_description(
+        &self,
+        id: i32,
+        new_description: impl AsRef<str>,
+    ) -> Result<(), Error> {
+        if let Err(err) = self.get(id) {
+            return Err(err);
+        }
+
+        let new_desc = new_description.as_ref().trim();
+        if new_desc.len() > MAX_DESCRIPTION_LENGTH {
+            return Err(Error::DescriptionTooLong);
+        }
+
+        use database::schema::base_paths::dsl::{base_paths, description, id as bp_id};
+
+        match diesel::update(base_paths.filter(bp_id.eq(id)))
+            .set(description.eq(new_desc))
+            .execute(&mut self.connection.establish_connection()?)
+        {
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(_) => Ok(()),
+        }
     }
 
     /// List all base paths that are currently being saved on the database.
