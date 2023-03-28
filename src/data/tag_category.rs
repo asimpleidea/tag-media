@@ -1,8 +1,11 @@
-use diesel::Queryable;
+use diesel::{AsChangeset, Queryable};
 use serde::Serialize;
 
+use crate::database::schema::tag_categories;
+
 /// This represents a tag category.
-#[derive(Debug, Queryable, Serialize)]
+#[derive(Debug, Queryable, Serialize, AsChangeset)]
+#[diesel(table_name = tag_categories)]
 pub struct Category {
     /// The id of this category.
     pub id: i32,
