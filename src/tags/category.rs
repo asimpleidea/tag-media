@@ -24,9 +24,36 @@ pub enum Error {
     /// It was not possible to establish a connection to the database.
     #[error("connection error: {0}")]
     ConnectionError(#[from] database::connection::Error),
+    /// The provided ID is not valid, e.g. it is <= 0.
+    #[error("invalid id provided")]
+    InvalidID,
+    /// The category was not found on the database.
+    #[error("not found")]
+    NotFound,
 }
 
 impl TagCategories {
+    /// Get a single category by ID.
+    ///
+    /// It returns an error if the ID is not valid, if the category with the
+    /// provided ID was not found or if an error occurred while getting the
+    /// category from the database.
+    pub fn get(&self, id: i32) -> Result<Category, Error> {
+        if id <= 0 {
+            return Err(Error::InvalidID);
+        }
+
+        use database::schema::tag_categories::dsl::{id as tc_id, tag_categories as tc_table};
+        let conn = &mut self.connection.establish_connection()?;
+        tc_table
+            .filter(tc_id.eq(id))
+            .first(conn)
+            .map_err(|err| match err {
+                diesel::result::Error::NotFound => Error::NotFound,
+                _ => Error::DatabaseError(err),
+            })
+    }
+
     /// List all tag categories that are currently being saved on the database.
     ///
     /// Optionally, you can list only some specific IDs with `ids`.
