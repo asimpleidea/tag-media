@@ -47,6 +47,9 @@ pub enum Error {
     /// Description is longer than 300 characters long.
     #[error("description too long")]
     DescriptionTooLong,
+    /// Name to search is to short.
+    #[error("name to search too short")]
+    NameToSearchTooShort,
 }
 
 /// Use to update the category.
@@ -158,6 +161,28 @@ impl TagCategories {
             Err(err) => Err(err.into()),
             Ok(_) => Ok(()),
         }
+    }
+
+    /// Searches a category that starts with the provided name.
+    ///
+    /// The name to search must have at least 3 characters.
+    /// This is a convenient function for [`list`] and thus returns the same errors.
+    pub fn search_by_name(&self, name: impl AsRef<str>) -> Result<Vec<Category>, Error> {
+        if name.as_ref().graphemes(true).count() < 3 {
+            return Err(Error::NameToSearchTooShort);
+        }
+
+        let res = self.list(None::<Vec<_>>)?;
+
+        Ok(res
+            .into_iter()
+            .filter(|category| {
+                category
+                    .name
+                    .to_lowercase()
+                    .starts_with(&name.as_ref().to_lowercase())
+            })
+            .collect())
     }
 
     /// List all tag categories that are currently being saved on the database.
