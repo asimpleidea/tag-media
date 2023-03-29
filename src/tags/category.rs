@@ -215,4 +215,23 @@ impl TagCategories {
             .load::<Category>(conn)
             .map_err(|err| Error::DatabaseError(err))
     }
+
+    /// Deletes a tag category.
+    ///
+    /// It returns an error if the ID is not valid, the category was not found
+    /// or if there was an error on the database.
+    ///
+    /// TODO: check if there are tags belonging to this: if there are then error.
+    pub fn delete(&self, id: i32) -> Result<(), Error> {
+        if let Err(err) = self.get(id) {
+            return Err(err);
+        }
+
+        use database::schema::tag_categories::dsl::{id as tc_id, tag_categories};
+        let conn = &mut self.connection.establish_connection()?;
+        match diesel::delete(tag_categories.filter(tc_id.eq(id))).execute(conn) {
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(_) => Ok(()),
+        }
+    }
 }
