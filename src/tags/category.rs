@@ -1,11 +1,11 @@
-use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use diesel::{ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
 use raster::Color;
 use thiserror::Error;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     data::tag_category::Category,
-    database::{self, connection::DatabaseConnection},
+    database::{self, connection::DatabaseConnection, schema::tag_categories},
 };
 
 const MAX_DESCRIPTION_LENGTH: usize = 300;
@@ -75,6 +75,18 @@ impl Default for UpdateTagCategory<'_> {
     }
 }
 
+#[derive(Insertable)]
+#[diesel(table_name = tag_categories)]
+/// Represents a new category to insert
+pub struct CreateTagCategory {
+    /// The name. Cannot be empty and must be less than 50 characters.
+    pub name: String,
+    /// The color to show on UI. Cannot be empty.
+    pub color: String,
+    /// The description.
+    pub description: String,
+}
+
 impl Category {
     fn validate(self) -> Result<Self, Error> {
         if self.name.len() == 0 {
@@ -98,7 +110,7 @@ impl Category {
 
     fn clean(mut self) -> Self {
         self.name = self.name.trim().into();
-        self.color = self.color.to_ascii_lowercase().into();
+        self.color = self.color.to_ascii_lowercase().trim().into();
         self.description = self.description.trim().into();
 
         self
@@ -113,7 +125,43 @@ impl Category {
     }
 }
 
+impl From<CreateTagCategory> for Category {
+    fn from(value: CreateTagCategory) -> Self {
+        Self {
+            id: 0,
+            name: value.name.into(),
+            color: value.color.into(),
+            description: value.description.into(),
+        }
+    }
+}
+
+impl From<Category> for CreateTagCategory {
+    fn from(value: Category) -> Self {
+        Self {
+            name: value.name,
+            color: value.color,
+            description: value.description,
+        }
+    }
+}
+
 impl TagCategories {
+    /// Creates a new tag category.
+    ///
+    /// Returns an error if the data provided is not valid or if there is
+    /// an error in the database.
+    pub fn create(&self, data: CreateTagCategory) -> Result<Category, Error> {
+        let data_to_insert = CreateTagCategory::from(Category::from(data).clean().validate()?);
+
+        use database::schema::tag_categories::dsl::tag_categories;
+        let conn = &mut self.connection.establish_connection()?;
+        diesel::insert_into(tag_categories)
+            .values(data_to_insert)
+            .get_result(conn)
+            .map_err(|err| Error::DatabaseError(err))
+    }
+
     /// Get a single category by ID.
     ///
     /// It returns an error if the ID is not valid, if the category with the
