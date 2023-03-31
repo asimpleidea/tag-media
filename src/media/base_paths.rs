@@ -1,9 +1,12 @@
+use std::path;
+
 use crate::{
     data::{self, base_path::BasePath},
-    database::{self, connection::DatabaseConnection},
+    database::{self, connection::DatabaseConnection, schema::base_paths},
 };
-use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use diesel::{ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
 use thiserror::Error;
+use unicode_segmentation::UnicodeSegmentation;
 
 const MAX_DESCRIPTION_LENGTH: usize = 300;
 
@@ -38,9 +41,88 @@ pub enum Error {
     /// The provided description is too long.
     #[error("description cannot be longer than 300 characters")]
     DescriptionTooLong,
+    /// The path is invalid, e.g. is empty.
+    #[error("invalid path")]
+    InvalidPath,
+    /// The provided path does not exist.
+    #[error("not exists")]
+    NotExists,
+    /// The provided path is not a directory.
+    #[error("not a directory")]
+    NotADirectory,
+    /// The provided path is not an absolute path.
+    #[error("not an absolute path")]
+    NotAbsolute,
+    /// The provided path is already registered on the database.
+    #[error("already exists")]
+    AlreadyExists,
+    /// The provided path is a sub path of an existing path.
+    #[error("is sub path")]
+    IsSubPath,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = base_paths)]
+pub struct NewBasePath<'a> {
+    base_path: &'a str,
+    description: &'a str,
 }
 
 impl BasePaths {
+    pub fn create(
+        &self,
+        base_path: impl AsRef<str>,
+        description: impl AsRef<str>,
+    ) -> Result<BasePath, Error> {
+        let bp = base_path.as_ref().trim().trim_end_matches('/');
+        if bp.len() == 0 {
+            return Err(Error::InvalidPath);
+        }
+
+        let desc = description.as_ref().trim();
+        if desc.graphemes(true).count() > MAX_DESCRIPTION_LENGTH {
+            return Err(Error::DescriptionTooLong);
+        }
+
+        let p = path::Path::new(bp);
+        if !p.exists() {
+            return Err(Error::NotExists);
+        }
+
+        if !p.is_dir() {
+            return Err(Error::NotADirectory);
+        }
+        if !p.is_absolute() {
+            return Err(Error::NotAbsolute);
+        }
+
+        let list = self.list(None::<Vec<_>>)?;
+        for basepath in list {
+            if basepath.base_path == bp {
+                return Err(Error::AlreadyExists);
+            }
+
+            if bp.starts_with(&basepath.base_path) {
+                // TODO: on future this will change all existing paths to this new
+                // sub path: e.g. if `/this/that/` exists and you are adding
+                // `/this/that/another`, then all media that starts with
+                // `another` and belongs to `this/that/` will be changed.
+                // TODO: this means that this will become a transaction.
+                return Err(Error::IsSubPath);
+            }
+        }
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::base_paths::dsl::base_paths;
+        diesel::insert_into(base_paths)
+            .values(NewBasePath {
+                base_path: bp,
+                description: desc,
+            })
+            .get_result(conn)
+            .map_err(|err| Error::DatabaseError(err))
+    }
+
     /// Gets a single base path by using its ID.
     ///
     /// It returns an error in case the ID is not valid, it was not found, or
