@@ -17,4 +17,15 @@ diesel::table! {
     }
 }
 
-diesel::allow_tables_to_appear_in_same_query!(base_paths, tag_categories,);
+diesel::table! {
+    tags (id) {
+        id -> Integer,
+        name -> Text,
+        category_id -> Integer,
+        description -> Text,
+    }
+}
+
+diesel::joinable!(tags -> tag_categories (category_id));
+
+diesel::allow_tables_to_appear_in_same_query!(base_paths, tag_categories, tags,);
