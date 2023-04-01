@@ -90,3 +90,11 @@ impl DatabaseConnection {
         }
     }
 }
+
+impl Clone for DatabaseConnection {
+    fn clone(&self) -> Self {
+        Self {
+            database_location: self.database_location.clone(),
+        }
+    }
+}
