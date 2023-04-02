@@ -62,6 +62,7 @@ impl Tags {
             Ok(tag) => Ok(tag),
         }
     }
+
     /// List tags, optionally belonging to a category.
     ///
     /// Returns an error in case the category is invalid or not found, or if
@@ -96,5 +97,24 @@ impl Tags {
             .order(name.asc())
             .load::<Tag>(conn)
             .map_err(|err| Error::DatabaseError(err))
+    }
+
+    /// Deletes the tag with the provided id
+    ///
+    /// Returns the same errors as the `get` function.
+    ///
+    /// TODO: check if there is any media with this tag. If there are, then
+    /// prevent delete.
+    pub fn delete(&self, id: i32) -> Result<(), Error> {
+        if let Err(err) = self.get(id) {
+            return Err(err);
+        }
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::tags::dsl::id as tag_id;
+        match diesel::delete(tags_table.filter(tag_id.eq(id))).execute(conn) {
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(_) => Ok(()),
+        }
     }
 }
