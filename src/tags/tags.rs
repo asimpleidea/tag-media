@@ -36,9 +36,32 @@ pub enum Error {
     /// Something happened while getting or working with the category.
     #[error("category error: {0}")]
     CategoryError(#[from] category::Error),
+    /// The provided ID is invalid
+    #[error("invalid id")]
+    InvalidID,
+    /// The tag was not found.
+    #[error("not found")]
+    NotFound,
 }
 
 impl Tags {
+    /// Gets the tag with the provided id.
+    ///
+    /// Returns an error if the id is not valid, if no tags with the provided
+    /// ID are found or if there is an error with the database.
+    pub fn get(&self, id: i32) -> Result<Tag, Error> {
+        if id <= 0 {
+            return Err(Error::InvalidID);
+        }
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::tags::dsl::id as tag_id;
+        match tags_table.filter(tag_id.eq(id)).first(conn) {
+            Err(err) if err == diesel::result::Error::NotFound => Err(Error::NotFound),
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(tag) => Ok(tag),
+        }
+    }
     /// List tags, optionally belonging to a category.
     ///
     /// Returns an error in case the category is invalid or not found, or if
