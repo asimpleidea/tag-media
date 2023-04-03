@@ -1,5 +1,6 @@
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
 use thiserror::Error;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     data::tag::Tag,
@@ -201,6 +202,28 @@ impl Tags {
             .order(name.asc())
             .load::<Tag>(conn)
             .map_err(|err| Error::DatabaseError(err))
+    }
+
+    /// Searches a tag that starts with the provided name.
+    ///
+    /// The name to search must have at least 3 characters.
+    /// This is a convenient function for [`list`] and thus returns the same errors.
+    pub fn search_by_name(&self, name: impl AsRef<str>) -> Result<Vec<Tag>, Error> {
+        let name_to_search = name.as_ref().trim();
+        if name_to_search.graphemes(true).count() < 3 {
+            return Err(Error::InvalidName);
+        }
+
+        let list = self.list(None)?;
+
+        Ok(list
+            .into_iter()
+            .filter(|tag| {
+                tag.name
+                    .to_ascii_lowercase()
+                    .starts_with(&name_to_search.to_ascii_lowercase())
+            })
+            .collect())
     }
 
     /// Deletes the tag with the provided id
