@@ -10,6 +10,9 @@ use crate::{
     tags::category::{self, tag_categories},
 };
 
+const MAX_NAME_LENGTH: usize = 50;
+const MAX_DESCRIPTION_LENGTH: usize = 300;
+
 pub struct Tags {
     connection: DatabaseConnection,
 }
@@ -30,18 +33,93 @@ pub enum Error {
     /// An invalid category ID was passed, e.g. <= 0
     #[error("invalid category id")]
     InvalidCategoryID,
-    /// The category was not found
+    /// The category was not found.
     #[error("category not found")]
     CategoryNotFound,
     /// Something happened while getting or working with the category.
     #[error("category error: {0}")]
     CategoryError(#[from] category::Error),
-    /// The provided ID is invalid
+    /// The provided ID is invalid.
     #[error("invalid id")]
     InvalidID,
+    /// The provided name is invalid.
+    #[error("invalid name")]
+    InvalidName,
+    /// The provided name is too long.
+    #[error("name too long")]
+    NameTooLong,
+    /// The provided description is too long.
+    #[error("description too long")]
+    DescriptionTooLong,
     /// The tag was not found.
     #[error("not found")]
     NotFound,
+}
+
+/// Used to define what to update in a tag.
+pub struct UpdateTag<'a> {
+    /// The new name. If `None` the existing name will be used.
+    ///
+    /// If `Some` it cannot be empty and cannot be longer that 50 characters.
+    pub name: Option<&'a str>,
+    /// The new category ID. if `None` the existing one will be used.
+    ///
+    /// If `Some` it will throw an error if is invalid or not found.
+    pub category_id: Option<i32>,
+    /// The new description. If `None` the existing one will be used.
+    ///
+    /// If `Some` it cannot be longer than 300 characters.
+    pub description: Option<&'a str>,
+}
+
+impl Default for UpdateTag<'_> {
+    fn default() -> Self {
+        Self {
+            name: None,
+            category_id: None,
+            description: None,
+        }
+    }
+}
+
+impl Tag {
+    fn validate(self, connection: &DatabaseConnection) -> Result<Self, Error> {
+        if self.category_id <= 0 {
+            return Err(Error::InvalidCategoryID);
+        }
+
+        match tag_categories(connection.clone()).get(self.category_id) {
+            Ok(_) => (),
+            Err(err) => return Err(Error::CategoryError(err)),
+        };
+
+        match self.name.len() {
+            0 => return Err(Error::InvalidName),
+            n if n > MAX_NAME_LENGTH => return Err(Error::NameTooLong),
+            _ => (),
+        };
+
+        if self.description.len() > MAX_DESCRIPTION_LENGTH {
+            return Err(Error::DescriptionTooLong);
+        }
+
+        Ok(self)
+    }
+
+    fn clean(mut self) -> Self {
+        self.name = self.name.trim().into();
+        self.description = self.description.trim().into();
+
+        self
+    }
+
+    fn with_new_data(mut self, new_data: UpdateTag) -> Self {
+        self.name = new_data.name.unwrap_or(&self.name).into();
+        self.category_id = new_data.category_id.unwrap_or(self.category_id);
+        self.description = new_data.description.unwrap_or(&self.description).into();
+
+        self
+    }
 }
 
 impl Tags {
@@ -60,6 +138,32 @@ impl Tags {
             Err(err) if err == diesel::result::Error::NotFound => Err(Error::NotFound),
             Err(err) => Err(Error::DatabaseError(err)),
             Ok(tag) => Ok(tag),
+        }
+    }
+
+    /// Updates a tag with the provided ID and the provided
+    /// [`new data`](UpdateTag).
+    ///
+    /// Take a look at [`UpdateTag`] to learn about the errors in the data.
+    /// It returns an error in case the tag does not exist, the new data is
+    /// invalid or there were problems in the database.
+    pub fn update(&self, id: i32, new_data: UpdateTag) -> Result<(), Error> {
+        let data = match self.get(id) {
+            Err(err) => return Err(err),
+            Ok(val) => val,
+        }
+        .with_new_data(new_data)
+        .clean()
+        .validate(&self.connection)?;
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::tags::dsl::id as tag_id;
+        match diesel::update(tags_table.filter(tag_id.eq(id)))
+            .set(data)
+            .execute(conn)
+        {
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(_) => Ok(()),
         }
     }
 
