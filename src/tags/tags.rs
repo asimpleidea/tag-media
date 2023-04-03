@@ -1,12 +1,14 @@
-use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use diesel::{ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
 use thiserror::Error;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     data::tag::Tag,
     database::{
-        self, connection::DatabaseConnection, connection::Error as ConnectionError,
-        schema::tags::dsl::tags as tags_table,
+        self,
+        connection::DatabaseConnection,
+        connection::Error as ConnectionError,
+        schema::tags::{self, dsl::tags as tags_table},
     },
     tags::category::{self, tag_categories},
 };
@@ -23,6 +25,7 @@ pub fn tags(connection: DatabaseConnection) -> Tags {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The operation could not be performed because the database returned an
     /// error.
@@ -55,6 +58,9 @@ pub enum Error {
     /// The tag was not found.
     #[error("not found")]
     NotFound,
+    /// The tag already exists
+    #[error("already exists")]
+    AlreadyExists,
 }
 
 /// Used to define what to update in a tag.
@@ -123,7 +129,74 @@ impl Tag {
     }
 }
 
+impl From<CreateTag> for Tag {
+    fn from(value: CreateTag) -> Self {
+        Self {
+            id: 0,
+            name: value.name,
+            category_id: value.category_id,
+            description: value.description,
+        }
+    }
+}
+
+impl CreateTag {
+    fn into_tag(self) -> Tag {
+        Tag {
+            id: 0,
+            name: self.name,
+            category_id: self.category_id,
+            description: self.description,
+        }
+    }
+}
+
+impl From<Tag> for CreateTag {
+    fn from(value: Tag) -> Self {
+        Self {
+            name: value.name,
+            category_id: value.category_id,
+            description: value.description,
+        }
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = tags)]
+/// Represents a new tag to insert.
+pub struct CreateTag {
+    /// The name of the tag.
+    pub name: String,
+    /// The category that it will belong to.
+    pub category_id: i32,
+    /// The description.
+    pub description: String,
+}
+
 impl Tags {
+    /// Inserts a new tag on the database.
+    ///
+    /// Returns an error if the data is not valid, it already exists or if
+    /// there were errors with the database.
+    pub fn create(&self, data: CreateTag) -> Result<Tag, Error> {
+        let data: CreateTag = data.into_tag().clean().validate(&self.connection)?.into();
+
+        match self.already_exists(&data.name, data.category_id) {
+            Err(err) => return Err(err),
+            Ok(exists) if exists.is_some() => return Err(Error::AlreadyExists),
+            Ok(_) => (),
+        }
+
+        let conn = &mut self.connection.establish_connection()?;
+        match diesel::insert_into(tags_table)
+            .values(data)
+            .get_result(conn)
+        {
+            Err(err) => Err(Error::DatabaseError(err)),
+            Ok(inserted) => Ok(inserted),
+        }
+    }
+
     /// Gets the tag with the provided id.
     ///
     /// Returns an error if the id is not valid, if no tags with the provided
@@ -156,6 +229,12 @@ impl Tags {
         .with_new_data(new_data)
         .clean()
         .validate(&self.connection)?;
+
+        match self.already_exists(&data.name, data.category_id) {
+            Err(err) => return Err(err),
+            Ok(exists) if exists.is_some() => return Err(Error::AlreadyExists),
+            Ok(_) => (),
+        }
 
         let conn = &mut self.connection.establish_connection()?;
         use database::schema::tags::dsl::id as tag_id;
@@ -242,6 +321,21 @@ impl Tags {
         match diesel::delete(tags_table.filter(tag_id.eq(id))).execute(conn) {
             Err(err) => Err(Error::DatabaseError(err)),
             Ok(_) => Ok(()),
+        }
+    }
+
+    fn already_exists(&self, name: &str, category_id: i32) -> Result<Option<()>, Error> {
+        use database::schema::tags::dsl::{category_id as cat_id, name as tag_name};
+        let conn = &mut self.connection.establish_connection()?;
+
+        match tags_table
+            .filter(tag_name.eq(name))
+            .filter(cat_id.eq(category_id))
+            .first::<Tag>(conn)
+        {
+            Err(err) if err == diesel::result::Error::NotFound => return Ok(None),
+            Err(err) => return Err(Error::DatabaseError(err)),
+            Ok(_) => return Ok(Some(())),
         }
     }
 }
