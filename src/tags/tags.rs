@@ -288,7 +288,7 @@ impl Tags {
     /// The name to search must have at least 3 characters.
     /// This is a convenient function for [`list`] and thus returns the same errors.
     pub fn search_by_name(&self, name: impl AsRef<str>) -> Result<Vec<Tag>, Error> {
-        let name_to_search = name.as_ref().trim();
+        let name_to_search = name.as_ref().trim().replace(" ", "_").to_ascii_lowercase();
         if name_to_search.graphemes(true).count() < 3 {
             return Err(Error::InvalidName);
         }
@@ -300,7 +300,8 @@ impl Tags {
             .filter(|tag| {
                 tag.name
                     .to_ascii_lowercase()
-                    .starts_with(&name_to_search.to_ascii_lowercase())
+                    .replace(" ", "_")
+                    .starts_with(&name_to_search)
             })
             .collect())
     }
