@@ -6,6 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::{
     data::tag_category::Category,
     database::{self, connection::DatabaseConnection, schema::tag_categories},
+    tags::tags::tags,
 };
 
 const MAX_DESCRIPTION_LENGTH: usize = 300;
@@ -50,6 +51,14 @@ pub enum Error {
     /// Name to search is to short.
     #[error("name to search too short")]
     NameToSearchTooShort,
+    /// The tag category is not empty.
+    #[error("category is not empty")]
+    NotEmpty,
+    /// Cannot delete this category.
+    ///
+    /// TODO: make this error better.
+    #[error("cannot delete category")]
+    CannotDelete,
 }
 
 /// Use to update the category.
@@ -274,6 +283,14 @@ impl TagCategories {
         if let Err(err) = self.get(id) {
             return Err(err);
         }
+
+        match tags(self.connection.clone()).list(Some(id)) {
+            Err(_) => return Err(Error::CannotDelete),
+            Ok(val) => match val.len() {
+                0 => (),
+                _ => return Err(Error::NotEmpty),
+            },
+        };
 
         use database::schema::tag_categories::dsl::{id as tc_id, tag_categories};
         let conn = &mut self.connection.establish_connection()?;
