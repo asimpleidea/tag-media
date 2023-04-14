@@ -293,4 +293,18 @@ impl Media {
             Ok(files) => Ok(files),
         }
     }
+
+    /// Deletes a media file with the provided ID.
+    pub fn delete(&self, id: i64) -> Result<(), Error> {
+        let _existing = self.get(id)?;
+
+        // TODO: check if there are any tags associated with this!
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::media::dsl::id as media_id;
+        match diesel::delete(media_table.filter(media_id.eq(id))).execute(conn) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(Error::DatabaseError(err)),
+        }
+    }
 }
