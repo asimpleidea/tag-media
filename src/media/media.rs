@@ -1,6 +1,7 @@
 use super::base_paths::Error as BasePathsError;
 use crate::data::media_file::{MediaFile, MediaType};
 use crate::database::{
+    self,
     connection::{DatabaseConnection, Error as ConnectionError},
     schema::media::{self, dsl::media as media_table},
 };
@@ -85,6 +86,18 @@ pub struct CreateMediaFile {
     pub media_type: MediaType,
 }
 
+/// Represents a media file to update.
+///
+/// Take a look at [`CreateMediaFile`] for the values.
+/// If `None` the existing values will be used.
+pub struct UpdateMediaFile {
+    pub width: Option<i16>,
+    pub height: Option<i16>,
+    pub size: Option<f64>,
+    pub mark: Option<i16>,
+    pub description: Option<String>,
+}
+
 impl MediaFile {
     fn validate(self) -> Result<MediaFile, Error> {
         if self.relative_path.is_empty() {
@@ -119,6 +132,31 @@ impl MediaFile {
         }
 
         Ok(self)
+    }
+
+    fn with_new_data(mut self, update_data: UpdateMediaFile) -> Self {
+        self = MediaFile {
+            id: self.id,
+            relative_path: self.relative_path,
+            base_path_id: self.base_path_id,
+            width: match update_data.width {
+                None => self.width,
+                Some(width) => Some(width),
+            },
+            height: match update_data.height {
+                None => self.height,
+                Some(height) => Some(height),
+            },
+            size: update_data.size.unwrap_or(self.size),
+            mark: match update_data.mark {
+                None => self.mark,
+                Some(mark) => Some(mark),
+            },
+            description: update_data.description.unwrap_or(self.description),
+            media_type: self.media_type,
+        };
+
+        self
     }
 }
 
@@ -219,6 +257,21 @@ impl Media {
             .get_result(conn)
         {
             Ok(val) => Ok(val),
+            Err(err) => Err(Error::DatabaseError(err)),
+        }
+    }
+
+    /// Updates a media file with the provided Id with the provided new data.
+    pub fn update(&self, id: i64, update_data: UpdateMediaFile) -> Result<(), Error> {
+        let data = self.get(id)?.with_new_data(update_data).validate()?;
+
+        let conn = &mut self.connection.establish_connection()?;
+        use database::schema::media::dsl::id as media_id;
+        match diesel::update(media_table.filter(media_id.eq(id)))
+            .set(data)
+            .execute(conn)
+        {
+            Ok(_) => Ok(()),
             Err(err) => Err(Error::DatabaseError(err)),
         }
     }

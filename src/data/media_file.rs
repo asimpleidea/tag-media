@@ -1,8 +1,9 @@
+use crate::database::schema::media;
 use diesel::{
     backend::Backend,
     deserialize::{self, FromSql},
     sql_types::Text,
-    Queryable,
+    AsChangeset, Queryable,
 };
 use serde::Serialize;
 
@@ -51,7 +52,7 @@ where
 }
 
 /// This represents a media file.
-#[derive(Debug, Queryable, Serialize)]
+#[derive(Debug, Queryable, Serialize, AsChangeset)]
 #[diesel(table_name = media)]
 pub struct MediaFile {
     /// The ID of the file.
