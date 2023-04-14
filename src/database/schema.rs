@@ -9,6 +9,20 @@ diesel::table! {
 }
 
 diesel::table! {
+    media (id) {
+        id -> BigInt,
+        relative_path -> Text,
+        base_path_id -> Integer,
+        width -> Nullable<SmallInt>,
+        height -> Nullable<SmallInt>,
+        size -> Double,
+        mark -> Nullable<SmallInt>,
+        description -> Text,
+        media_type -> Text,
+    }
+}
+
+diesel::table! {
     tag_categories (id) {
         id -> Integer,
         name -> Text,
@@ -26,6 +40,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(media -> base_paths (base_path_id));
 diesel::joinable!(tags -> tag_categories (category_id));
 
-diesel::allow_tables_to_appear_in_same_query!(base_paths, tag_categories, tags,);
+diesel::allow_tables_to_appear_in_same_query!(base_paths, media, tag_categories, tags,);
