@@ -26,6 +26,17 @@ impl Into<MediaType> for String {
     }
 }
 
+impl From<MediaType> for String {
+    fn from(value: MediaType) -> String {
+        match value {
+            MediaType::Image => String::from("image"),
+            MediaType::Video => String::from("video"),
+            MediaType::Sound => String::from("sound"),
+            _ => String::from(""),
+        }
+    }
+}
+
 // Needed for a good deserialization for [`MediaType`].
 impl<DB> Queryable<Text, DB> for MediaType
 where

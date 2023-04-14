@@ -1,12 +1,16 @@
 use super::base_paths::Error as BasePathsError;
-use crate::data::media_file::MediaFile;
+use crate::data::media_file::{MediaFile, MediaType};
 use crate::database::{
     connection::{DatabaseConnection, Error as ConnectionError},
     schema::media::{self, dsl::media as media_table},
 };
 use crate::media::base_paths;
-use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl};
+use diesel::{ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
+use std::convert::From;
 use thiserror::Error;
+use unicode_segmentation::UnicodeSegmentation;
+
+const MAX_DESCRIPTION_LENGTH: usize = 300;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -33,6 +37,21 @@ pub enum Error {
     /// The base path ID is invalid, e.g. it is <= 0.
     #[error("invalid base path ID")]
     InvalidBasePathID,
+    /// The provided width is invalid, e.g. is <= 0.
+    #[error("invalid width")]
+    InvalidWidth,
+    /// The provided height is invalid, e.g. is <= 0.
+    #[error("invalid height")]
+    InvalidHeight,
+    /// The provided size is invalid, e.g. is <= 0.
+    #[error("invalid size")]
+    InvalidSize,
+    /// The provided mark is invalid, e.g. is <= 0 or > 10.
+    #[error("invalid mark")]
+    InvalidMark,
+    /// The provided description is longer than 300 characters.
+    #[error("description too long")]
+    DescriptionTooLong,
 }
 
 pub struct Media {
@@ -41,6 +60,97 @@ pub struct Media {
 
 pub fn media(connection: DatabaseConnection) -> Media {
     Media { connection }
+}
+
+/// Represents a media file to create.
+#[derive(Insertable)]
+#[diesel(table_name = media)]
+pub struct CreateMediaFile {
+    /// The relative path.
+    pub relative_path: String,
+    /// The ID of the parent base path.
+    pub base_path_id: i32,
+    /// The width, if an image or a video.
+    pub width: Option<i16>,
+    /// The height, if an image or a video.
+    pub height: Option<i16>,
+    /// The size in kB.
+    pub size: f64,
+    /// The mark, from 1 to 10.
+    pub mark: Option<i16>,
+    /// The description.
+    pub description: String,
+    /// The media type, e.g. Image, Video or Sound.
+    #[diesel(serialize_as = String)]
+    pub media_type: MediaType,
+}
+
+impl MediaFile {
+    fn validate(self) -> Result<MediaFile, Error> {
+        if self.relative_path.is_empty() {
+            return Err(Error::InvalidRelativePath);
+        }
+
+        if self.base_path_id <= 0 {
+            return Err(Error::InvalidBasePathID);
+        }
+
+        match self.width {
+            Some(val) if val <= 0 => return Err(Error::InvalidWidth),
+            _ => (),
+        };
+
+        match self.height {
+            Some(val) if val <= 0 => return Err(Error::InvalidHeight),
+            _ => (),
+        };
+
+        if self.size <= 0.0 {
+            return Err(Error::InvalidSize);
+        }
+
+        match self.mark {
+            Some(val) if val <= 0 || val > 10 => return Err(Error::InvalidMark),
+            _ => (),
+        };
+
+        if self.description.graphemes(true).count() > MAX_DESCRIPTION_LENGTH {
+            return Err(Error::DescriptionTooLong);
+        }
+
+        Ok(self)
+    }
+}
+
+impl From<CreateMediaFile> for MediaFile {
+    fn from(value: CreateMediaFile) -> Self {
+        Self {
+            id: 0,
+            relative_path: value.relative_path.trim_matches('/').into(),
+            base_path_id: value.base_path_id,
+            width: value.width,
+            height: value.height,
+            size: value.size,
+            mark: value.mark,
+            description: value.description.trim().into(),
+            media_type: value.media_type,
+        }
+    }
+}
+
+impl Into<CreateMediaFile> for MediaFile {
+    fn into(self) -> CreateMediaFile {
+        CreateMediaFile {
+            relative_path: self.relative_path,
+            base_path_id: self.base_path_id,
+            width: self.width,
+            height: self.height,
+            size: self.size,
+            mark: self.mark,
+            description: self.description,
+            media_type: self.media_type,
+        }
+    }
 }
 
 impl Media {
@@ -88,6 +198,29 @@ impl Media {
                 diesel::NotFound => Error::NotFound,
                 _ => Error::DatabaseError(err),
             })
+    }
+
+    /// Creates a media file.
+    ///
+    /// It returns the created `MediaFile` or an error.
+    /// Look at [`CreateMediaFile`] for more clues on the errors.
+    pub fn create(&self, create_data: CreateMediaFile) -> Result<MediaFile, Error> {
+        if let Err(err) =
+            base_paths::base_paths(self.connection.clone()).get(create_data.base_path_id)
+        {
+            return Err(Error::BasePathsError(err));
+        }
+
+        let data: CreateMediaFile = MediaFile::from(create_data).validate()?.into();
+
+        let conn = &mut self.connection.establish_connection()?;
+        match diesel::insert_into(media_table)
+            .values(data)
+            .get_result(conn)
+        {
+            Ok(val) => Ok(val),
+            Err(err) => Err(Error::DatabaseError(err)),
+        }
     }
 
     /// List all media file from a base path ID, if registered.
