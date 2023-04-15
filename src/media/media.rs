@@ -249,6 +249,12 @@ impl Media {
             return Err(Error::BasePathsError(err));
         }
 
+        if let Err(err) =
+            self.get_by_relative_path(create_data.base_path_id, &create_data.relative_path)
+        {
+            return Err(err);
+        }
+
         let data: CreateMediaFile = MediaFile::from(create_data).validate()?.into();
 
         let conn = &mut self.connection.establish_connection()?;
