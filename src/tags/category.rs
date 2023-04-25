@@ -277,8 +277,6 @@ impl TagCategories {
     ///
     /// It returns an error if the ID is not valid, the category was not found
     /// or if there was an error on the database.
-    ///
-    /// TODO: check if there are tags belonging to this: if there are then error.
     pub fn delete(&self, id: i32) -> Result<(), Error> {
         if let Err(err) = self.get(id) {
             return Err(err);
