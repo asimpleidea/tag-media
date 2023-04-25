@@ -59,6 +59,10 @@ pub enum Error {
     /// The provided path is a sub path of an existing path.
     #[error("is sub path")]
     IsSubPath,
+    /// The base path cannot be deleted because it is still referenced
+    /// somewhere.
+    #[error("cannot be deleted because in use")]
+    InUse,
 }
 
 #[derive(Insertable)]
@@ -209,11 +213,20 @@ impl BasePaths {
     ///
     /// It returns an error in case the ID is not valid, it was not found, or
     /// if there was an error on the database.
-    ///
-    /// TODO:  check if there are media with this: error if there are
     pub fn delete(&self, id: i32) -> Result<(), Error> {
         if let Err(err) = self.get(id) {
             return Err(err);
+        }
+
+        {
+            use database::schema::media::dsl::{base_path_id as bp_id, media as m_table};
+            let conn = &mut self.connection.establish_connection()?;
+
+            match m_table.filter(bp_id.eq(id)).count().execute(conn) {
+                Ok(vals) if vals == 0 => (),
+                Ok(_) => return Err(Error::InUse),
+                Err(err) => return Err(Error::DatabaseError(err)),
+            }
         }
 
         use database::schema::base_paths::dsl::{base_paths, id as bp_id};
