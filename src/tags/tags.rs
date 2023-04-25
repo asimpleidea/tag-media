@@ -61,6 +61,9 @@ pub enum Error {
     /// The tag already exists
     #[error("already exists")]
     AlreadyExists,
+    /// The tag cannot be deleted because it is referenced somewhere.
+    #[error("in use")]
+    InUse,
 }
 
 /// Used to define what to update in a tag.
@@ -309,15 +312,21 @@ impl Tags {
     /// Deletes the tag with the provided id
     ///
     /// Returns the same errors as the `get` function.
-    ///
-    /// TODO: check if there is any media with this tag. If there are, then
-    /// prevent delete.
     pub fn delete(&self, id: i32) -> Result<(), Error> {
         if let Err(err) = self.get(id) {
             return Err(err);
         }
 
         let conn = &mut self.connection.establish_connection()?;
+        {
+            use database::schema::media_tags::dsl::{media_tags as md_table, tag_id};
+            match md_table.filter(tag_id.eq(id)).count().execute(conn) {
+                Ok(vals) if vals == 0 => (),
+                Ok(_) => return Err(Error::InUse),
+                Err(err) => return Err(Error::DatabaseError(err)),
+            }
+        }
+
         use database::schema::tags::dsl::id as tag_id;
         match diesel::delete(tags_table.filter(tag_id.eq(id))).execute(conn) {
             Err(err) => Err(Error::DatabaseError(err)),
