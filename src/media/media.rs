@@ -74,6 +74,9 @@ pub enum Error {
     // Tthis tag is already present in this media.
     #[error("media is already tagged")]
     AlreadyTagged,
+    /// The media was not tagged with this.
+    #[error("tag not found")]
+    TagNotFound,
 }
 
 pub struct Media {
@@ -418,5 +421,33 @@ impl Media {
             .filter(id.eq_any(tag_ids))
             .load(conn)
             .map_err(|err| Error::DatabaseError(err))
+    }
+
+    /// Removes (untags) a media.
+    pub fn untag_media(&self, media_id: i64, tag_id: i32) -> Result<(), Error> {
+        if let Err(err) = self.get(media_id) {
+            return Err(err);
+        }
+
+        if let Err(err) = tags::tags::tags(self.connection.clone()).get(tag_id) {
+            return Err(Error::TagError(err));
+        }
+
+        if !self
+            .list_tags_for_media(media_id)?
+            .into_iter()
+            .any(|tag| tag.id == tag_id)
+        {
+            return Err(Error::TagNotFound);
+        }
+
+        use database::schema::media_tags::dsl::{
+            media_id as mid, media_tags as md_table, tag_id as tid,
+        };
+        let conn = &mut self.connection.establish_connection()?;
+        match diesel::delete(md_table.filter(mid.eq(mid)).filter(tid.eq(tag_id))).execute(conn) {
+            Ok(_) => return Ok(()),
+            Err(err) => return Err(Error::DatabaseError(err)),
+        }
     }
 }
