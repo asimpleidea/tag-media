@@ -1,6 +1,9 @@
 use super::base_paths::Error as BasePathsError;
 use crate::{
-    data::media_file::{MediaFile, MediaType},
+    data::{
+        media_file::{MediaFile, MediaType},
+        tag::Tag,
+    },
     database::{
         self,
         connection::{DatabaseConnection, Error as ConnectionError},
@@ -386,5 +389,34 @@ impl Media {
             Ok(_) => Ok(()),
             Err(err) => return Err(Error::DatabaseError(err)),
         }
+    }
+
+    /// List all the tags that are available for the provided media.
+    pub fn list_tags_for_media(&self, media_id: i64) -> Result<Vec<Tag>, Error> {
+        if media_id <= 0 {
+            return Err(Error::InvalidID);
+        }
+
+        match self.get(media_id) {
+            Ok(_) => (),
+            Err(err) => return Err(err),
+        }
+
+        let conn = &mut self.connection.establish_connection()?;
+
+        let tag_ids = {
+            use database::schema::media_tags::dsl::{media_id as mid, media_tags as md_table};
+
+            match md_table.filter(mid.eq(media_id)).load::<MediaTag>(conn) {
+                Err(err) => return Err(Error::DatabaseError(err)),
+                Ok(vals) => vals.into_iter().map(|mt| mt.tag_id).collect::<Vec<i32>>(),
+            }
+        };
+
+        use database::schema::tags::dsl::{id, tags as tags_table};
+        tags_table
+            .filter(id.eq_any(tag_ids))
+            .load(conn)
+            .map_err(|err| Error::DatabaseError(err))
     }
 }
