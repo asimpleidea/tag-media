@@ -1,12 +1,18 @@
 use super::base_paths::Error as BasePathsError;
-use crate::data::media_file::{MediaFile, MediaType};
-use crate::database::{
-    self,
-    connection::{DatabaseConnection, Error as ConnectionError},
-    schema::media::{self, dsl::media as media_table},
+use crate::{
+    data::media_file::{MediaFile, MediaType},
+    database::{
+        self,
+        connection::{DatabaseConnection, Error as ConnectionError},
+        schema::{
+            media::{self, dsl::media as media_table},
+            media_tags::{self},
+        },
+    },
+    media::base_paths,
+    tags::{self},
 };
-use crate::media::base_paths;
-use diesel::{ExpressionMethods, Insertable, QueryDsl, RunQueryDsl};
+use diesel::{ExpressionMethods, Insertable, QueryDsl, Queryable, RunQueryDsl};
 use std::convert::From;
 use thiserror::Error;
 use unicode_segmentation::UnicodeSegmentation;
@@ -53,6 +59,18 @@ pub enum Error {
     /// The provided description is longer than 300 characters.
     #[error("description too long")]
     DescriptionTooLong,
+    /// The provided media is already there.
+    #[error("already exists")]
+    AlreadyExists,
+    /// Cannot delete because the media is still referenced somewhere.
+    #[error("in use")]
+    InUse,
+    // Tag error occurred.
+    #[error("error in tags: {0}")]
+    TagError(#[from] tags::tags::Error),
+    // Tthis tag is already present in this media.
+    #[error("media is already tagged")]
+    AlreadyTagged,
 }
 
 pub struct Media {
@@ -190,6 +208,13 @@ impl Into<CreateMediaFile> for MediaFile {
         }
     }
 }
+#[derive(Debug, Queryable, Insertable)]
+#[diesel(table_name = media_tags)]
+struct MediaTag {
+    id: i64,
+    media_id: i64,
+    tag_id: i32,
+}
 
 impl Media {
     /// Gets a media file by using its ID.
@@ -249,13 +274,21 @@ impl Media {
             return Err(Error::BasePathsError(err));
         }
 
-        if let Err(err) =
-            self.get_by_relative_path(create_data.base_path_id, &create_data.relative_path)
-        {
-            return Err(err);
-        }
-
         let data: CreateMediaFile = MediaFile::from(create_data).validate()?.into();
+
+        {
+            let conn = &mut self.connection.establish_connection()?;
+            use database::schema::media::dsl::{base_path_id, relative_path};
+            match media_table
+                .filter(base_path_id.eq(data.base_path_id))
+                .filter(relative_path.eq(&data.relative_path))
+                .first::<MediaFile>(conn)
+            {
+                Ok(_) => return Err(Error::AlreadyExists),
+                Err(err) if err == diesel::result::Error::NotFound => (),
+                Err(err) => return Err(Error::DatabaseError(err)),
+            }
+        }
 
         let conn = &mut self.connection.establish_connection()?;
         match diesel::insert_into(media_table)
@@ -304,13 +337,54 @@ impl Media {
     pub fn delete(&self, id: i64) -> Result<(), Error> {
         let _existing = self.get(id)?;
 
-        // TODO: check if there are any tags associated with this!
-
         let conn = &mut self.connection.establish_connection()?;
+
+        {
+            use database::schema::media_tags::dsl::{media_id, media_tags as mt_table};
+            match mt_table.filter(media_id.eq(id)).count().execute(conn) {
+                Ok(vals) if vals == 0 => (),
+                Ok(_) => return Err(Error::InUse),
+                Err(err) => return Err(Error::DatabaseError(err)),
+            }
+        }
+
         use database::schema::media::dsl::id as media_id;
         match diesel::delete(media_table.filter(media_id.eq(id))).execute(conn) {
             Ok(_) => Ok(()),
             Err(err) => Err(Error::DatabaseError(err)),
+        }
+    }
+
+    /// Inserts a tag for the media id with the provided tag id.
+    pub fn insert_tag(&self, media_id: i64, tag_id: i32) -> Result<(), Error> {
+        if let Err(err) = self.get(media_id) {
+            return Err(err);
+        }
+
+        if let Err(err) = tags::tags::tags(self.connection.clone()).get(tag_id) {
+            return Err(Error::TagError(err));
+        }
+
+        use database::schema::media_tags::dsl::{
+            media_id as mid, media_tags as media_tags_table, tag_id as tid,
+        };
+        let conn = &mut self.connection.establish_connection()?;
+        match media_tags_table
+            .filter(mid.eq(media_id))
+            .filter(tid.eq(tag_id))
+            .first::<MediaTag>(conn)
+        {
+            Ok(_) => return Err(Error::AlreadyTagged),
+            Err(err) if err == diesel::NotFound => (),
+            Err(err) => return Err(Error::DatabaseError(err)),
+        };
+
+        match diesel::insert_into(media_tags_table)
+            .values(&vec![(mid.eq(media_id), tid.eq(tag_id))])
+            .execute(conn)
+        {
+            Ok(_) => Ok(()),
+            Err(err) => return Err(Error::DatabaseError(err)),
         }
     }
 }
