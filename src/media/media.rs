@@ -15,7 +15,9 @@ use crate::{
     media::base_paths,
     tags::{self},
 };
-use diesel::{ExpressionMethods, Insertable, QueryDsl, Queryable, RunQueryDsl};
+use diesel::{
+    dsl::count_distinct, ExpressionMethods, Insertable, QueryDsl, Queryable, RunQueryDsl,
+};
 use std::convert::From;
 use thiserror::Error;
 use unicode_segmentation::UnicodeSegmentation;
@@ -77,6 +79,9 @@ pub enum Error {
     /// The media was not tagged with this.
     #[error("tag not found")]
     TagNotFound,
+    /// No tags have been provided.
+    #[error("no tags have been provided")]
+    NoTagsProvided,
 }
 
 pub struct Media {
@@ -449,5 +454,40 @@ impl Media {
             Ok(_) => return Ok(()),
             Err(err) => return Err(Error::DatabaseError(err)),
         }
+    }
+
+    /// List media starting from tags
+    pub fn list_media_from_tags(
+        &self,
+        tags: impl IntoIterator<Item = i32>,
+    ) -> Result<Vec<MediaFile>, Error> {
+        let tag_ids = {
+            let mut t = tags.into_iter().collect::<Vec<i32>>();
+
+            t.sort_unstable();
+            t.dedup();
+            t
+        };
+
+        if tag_ids.is_empty() {
+            return Err(Error::NoTagsProvided);
+        }
+
+        use database::schema::media_tags::dsl::{media_id, media_tags as mt_table, tag_id as tid};
+        let conn = &mut self.connection.establish_connection()?;
+
+        let img_ids = mt_table
+            .select(media_id)
+            .filter(tid.eq_any(&tag_ids))
+            .group_by(media_id)
+            .having(count_distinct(tid).eq(tag_ids.len() as i64))
+            .distinct()
+            .load::<i64>(conn)?;
+
+        use database::schema::media::dsl::id;
+        media_table
+            .filter(id.eq_any(img_ids))
+            .load(conn)
+            .map_err(|err| Error::DatabaseError(err))
     }
 }
